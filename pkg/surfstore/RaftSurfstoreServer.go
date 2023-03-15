@@ -2,7 +2,6 @@ package surfstore
 
 import (
 	context "context"
-	"fmt"
 	// "fmt"
 	"sync"
 
@@ -182,8 +181,6 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	} else { // [UpdateFile] sendHeartbeat:  apply to metastore(state matchine) of followers
 		// fmt.Println("-------------> [UpdateFile] SendHeartbeat")
 		// s.lastApplied < input.LeaderCommit
-		fmt.Printf("****Input Entry: %s, Input Commit: %d\n", input.Entries, input.LeaderCommit)
-		fmt.Printf("****Client %d: {Log: %s}, {lastApplied: %d}\n", s.id, s.log, s.lastApplied)
 		s.commitIndex++
 		entry := s.log[s.lastApplied+1]
 		s.metaStore.UpdateFile(ctx, entry.FileMetaData)
