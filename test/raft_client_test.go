@@ -1,7 +1,6 @@
 package SurfTest
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
@@ -22,7 +21,6 @@ func TestSyncTwoClientsSameFileLeaderFailure(t *testing.T) {
 	worker2 := InitDirectoryWorker("test1", SRC_PATH)
 	defer worker1.CleanUp()
 	defer worker2.CleanUp()
-	fmt.Println(worker1.DirectoryName)
 
 	//clients add different files
 	file1 := "multi_file1.txt"

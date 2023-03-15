@@ -2,6 +2,8 @@ package surfstore
 
 import (
 	context "context"
+	"errors"
+	"fmt"
 	"time"
 
 	grpc "google.golang.org/grpc"
@@ -100,11 +102,21 @@ func (surfClient *RPCClient) GetFileInfoMap(serverFileInfoMap *map[string]*FileM
 
 func (surfClient *RPCClient) UpdateFile(fileMetaData *FileMetaData, latestVersion *int32) error {
 	// connect to the server
-	conn, err := grpc.Dial(surfClient.MetaStoreAddrs[0], grpc.WithInsecure())
-	if err != nil {
-		return err
+	var c RaftSurfstoreClient
+	var conn *grpc.ClientConn
+	for ind, _ := range surfClient.MetaStoreAddrs {
+		fmt.Println(">>>>>>>>", ind)
+		conn, err := grpc.Dial(surfClient.MetaStoreAddrs[ind], grpc.WithInsecure())
+		defer conn.Close()
+		if errors.Is(err, ERR_NOT_LEADER) {
+			fmt.Println("Not Leader")
+			continue
+		} else if err != nil {
+			return err
+		}
+		c = NewRaftSurfstoreClient(conn)
+		break
 	}
-	c := NewRaftSurfstoreClient(conn)
 
 	// perform the call
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -115,8 +127,7 @@ func (surfClient *RPCClient) UpdateFile(fileMetaData *FileMetaData, latestVersio
 		return err
 	}
 	*latestVersion = v.Version
-
-	return conn.Close()
+	return nil
 }
 
 func (surfClient *RPCClient) GetBlockHashes(blockStoreAddr string, blockHashes *[]string) error {
