@@ -122,14 +122,14 @@ func (s *RaftSurfstore) sendToAllFollowersInParallel(ctx context.Context) {
 func (s *RaftSurfstore) sendToFollower(ctx context.Context, addr string, responses chan bool) {
 	var prev_logIndex int64
 	var prev_logTerm int64
-	if len(s.log) > 0 {
-		prev_logIndex = int64(len(s.log) - 1)
-		prev_logTerm = s.log[len(s.log)-1].Term
+	if len(s.log) > 1 {
+		prev_logIndex = int64(len(s.log) - 2)
+		prev_logTerm = s.log[len(s.log)-2].Term
 	} else {
 		prev_logIndex = int64(-1)
 		prev_logTerm = int64(0)
 	}
-	dummyAppendEntriesInput := AppendEntryInput{
+	AppendEntriesInput := AppendEntryInput{
 		// TODO: put the right values
 		Term:         s.term,
 		PrevLogIndex: prev_logIndex,
@@ -141,7 +141,7 @@ func (s *RaftSurfstore) sendToFollower(ctx context.Context, addr string, respons
 	conn, _ := grpc.Dial(addr, grpc.WithInsecure())
 	client := NewRaftSurfstoreClient(conn)
 
-	_, _ = client.AppendEntries(ctx, &dummyAppendEntriesInput)
+	_, _ = client.AppendEntries(ctx, &AppendEntriesInput)
 
 	// TODO: check output
 	responses <- true
@@ -163,7 +163,7 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	*/
 
 	if input.Term < s.term {
-		fmt.Println("-------------> [setLeader] ERR NOT LEADER")
+		fmt.Println("!!!!!!!!!! [setLeader] ERR NOT LEADER")
 		return &AppendEntryOutput{Term: s.term}, ERR_NOT_LEADER
 	}
 
@@ -174,20 +174,40 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		s.isLeader = false
 		s.term = input.Term
 		fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
+		return nil, nil
 	}
 
-	// // TODO actually check entries
-	// if len(s.log) == 0 || len(s.log) < Input.PrevLogIndex-1 { //refuses to append new entreis
-	// 	return false, nil
-	// } else if {
+	if len(input.Entries) == 0 { //Hearbeat from previous leader
+		fmt.Println("!!!!!!!!!!! [setLeader] Leader switched")
+		return nil, nil
+	}
 
-	// }
+	// TODO actually check entries
+	//2. Reply false if log doesn’t contain an entry at prevLogIndex whose term
+	// matches prevLogTerm (§5.3)
 
-	// for s.lastApplied < input.LeaderCommit {
-	// 	entry := s.log[s.lastApplied+1]
-	// 	s.metaStore.UpdateFile(ctx, entry.FileMetaData)
-	// 	s.lastApplied++
-	// }
+	fmt.Println("-------------> UpdateFile (Update Client Log)")
+	if len(s.log) >= len(input.Entries)-1 && s.log[input.PrevLogIndex].Term != input.PrevLogTerm { //refuses to append new entry
+		return nil, nil
+	}
+
+	//3. conflict with new entry
+	if len(s.log) >= len(input.Entries) && s.log[len(s.log)-1].Term != input.Term {
+		s.log = s.log[:input.PrevLogIndex+1]
+		s.log = append(s.log, input.Entries[len(input.Entries)-1])
+	}
+
+	//4. Append any new entries not already in the log
+	if len(s.log) < len(input.Entries)-1 {
+		s.log = input.Entries
+	}
+
+	fmt.Println("-------------> [UpdateFile] SendHeartbeat")
+	for s.lastApplied < input.LeaderCommit {
+		entry := s.log[s.lastApplied+1]
+		s.metaStore.UpdateFile(ctx, entry.FileMetaData)
+		s.lastApplied++
+	}
 	// else if s.lastApplied == input.LeaderCommit { // update
 	// 	fmt.Println("-------------> UpdateFile (Update Client Log)")
 	// 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
@@ -244,15 +264,15 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 		prev_logTerm = int64(0)
 	}
 	//contact all the followers, and send some AppendEntries call
-	dummyAppendEntriesInput := AppendEntryInput{
+	AppendEntriesInput := AppendEntryInput{
 		//TODO: put the right values
 		Term:         s.term,
 		PrevLogIndex: prev_logIndex,
 		PrevLogTerm:  prev_logTerm,
-		Entries:      make([]*UpdateOperation, 0),
+		Entries:      s.log,
 		LeaderCommit: s.commitIndex,
 	}
-	fmt.Printf("[Input Entry]: {Term: %d}, {Entries:%s}, {Commit: %d}\n", dummyAppendEntriesInput.Term, dummyAppendEntriesInput.Entries, dummyAppendEntriesInput.LeaderCommit)
+	fmt.Printf("[Input Entry]: {Term: %d}, {Entries:%s}, {Commit: %d}\n", AppendEntriesInput.Term, AppendEntriesInput.Entries, AppendEntriesInput.LeaderCommit)
 
 	for idx, addr := range s.peers {
 		if int64(idx) == s.id {
@@ -261,7 +281,7 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 		conn, _ := grpc.Dial(addr, grpc.WithInsecure())
 		client := NewRaftSurfstoreClient(conn)
 
-		_, err := client.AppendEntries(ctx, &dummyAppendEntriesInput)
+		_, err := client.AppendEntries(ctx, &AppendEntriesInput)
 		if errors.Is(err, ERR_NOT_LEADER) {
 			s.isLeaderMutex.Lock()
 			defer s.isLeaderMutex.Unlock()
