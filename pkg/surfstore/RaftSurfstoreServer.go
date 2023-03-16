@@ -3,7 +3,8 @@ package surfstore
 import (
 	context "context"
 	"errors"
-	"fmt"
+
+	// "fmt"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -55,11 +56,13 @@ func (s *RaftSurfstore) GetBlockStoreAddrs(ctx context.Context, empty *emptypb.E
 }
 
 func (s *RaftSurfstore) UpdateFile(ctx context.Context, filemeta *FileMetaData) (*Version, error) {
-	fmt.Printf("============= UpdateFile: %d =============\n", s.id)
+	// fmt.Printf("============= UpdateFile: %d =============\n", s.id)
 	if !s.isLeader {
 		return nil, ERR_NOT_LEADER
+	} else if s.isCrashed {
+		return nil, ERR_SERVER_CRASHED
 	} else {
-		fmt.Printf("[Leader %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
+		// fmt.Printf("[Leader %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 	}
 	//append entry to our log
 	s.log = append(s.log, &UpdateOperation{
@@ -79,9 +82,9 @@ func (s *RaftSurfstore) UpdateFile(ctx context.Context, filemeta *FileMetaData) 
 
 	//once commited, apply to the state machine
 	if commit {
-		fmt.Println("**********SUCCESS COMMITTED*********")
+		// fmt.Println("**********SUCCESS COMMITTED*********")
 		s.lastApplied++
-		fmt.Printf("[Leader %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
+		// fmt.Printf("[Leader %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 		return s.metaStore.UpdateFile(ctx, filemeta)
 	}
 	return nil, nil
@@ -163,22 +166,22 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	*/
 
 	if input.Term < s.term {
-		fmt.Println("!!!!!!!!!! [setLeader] ERR NOT LEADER")
+		// fmt.Println("!!!!!!!!!! [setLeader] ERR NOT LEADER")
 		return &AppendEntryOutput{Term: s.term}, ERR_NOT_LEADER
 	}
 
 	if input.Term > s.term { // [setLeader] sendHeartbeat: if follower term is smaller
-		fmt.Println("-------------> [setLeader] SendHeartbeat")
+		// fmt.Println("-------------> [setLeader] SendHeartbeat")
 		s.isLeaderMutex.Lock()
 		defer s.isLeaderMutex.Unlock()
 		s.isLeader = false
 		s.term = input.Term
-		fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
+		// fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 		return nil, nil
 	}
 
 	if len(input.Entries) == 0 { //Hearbeat from previous leader
-		fmt.Println("!!!!!!!!!!! [setLeader] Leader switched")
+		// fmt.Println("!!!!!!!!!!! [setLeader] Leader switched")
 		return nil, nil
 	}
 
@@ -186,7 +189,7 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	//2. Reply false if log doesn’t contain an entry at prevLogIndex whose term
 	// matches prevLogTerm (§5.3)
 
-	fmt.Println("-------------> UpdateFile (Update Client Log)")
+	// fmt.Println("-------------> UpdateFile (Update Client Log)")
 	if len(s.log) >= len(input.Entries)-1 && s.log[input.PrevLogIndex].Term != input.PrevLogTerm { //refuses to append new entry
 		return nil, nil
 	}
@@ -202,44 +205,22 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		s.log = input.Entries
 	}
 
-	fmt.Println("-------------> [UpdateFile] SendHeartbeat")
+	// fmt.Println("-------------> [UpdateFile] SendHeartbeat")
 	for s.lastApplied < input.LeaderCommit {
 		entry := s.log[s.lastApplied+1]
 		s.metaStore.UpdateFile(ctx, entry.FileMetaData)
 		s.lastApplied++
 	}
-	// else if s.lastApplied == input.LeaderCommit { // update
-	// 	fmt.Println("-------------> UpdateFile (Update Client Log)")
-	// 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
-	// 	// if the follower does not find an Prev Entry in its log with the same index and term
-	// 	// refuses the new entries
-	// 	if len(s.log) == 0 && len(input.Entries) > 0 { //inital entry append of follower
-	// 		s.log = input.Entries
-	// 	} else if s.log[input.PrevLogIndex].Term == input.PrevLogTerm && len(input.Entries) > 0 { // follower log is not empty
-	// 		s.log = input.Entries
-	// 	} else {
-	// 		fmt.Println("how to refuse the new entries?")
-	// 	}
-	// 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
-	// } else { // [UpdateFile] sendHeartbeat:  apply to metastore(state matchine) of followers
-	// 	fmt.Println("-------------> [UpdateFile] SendHeartbeat")
-	// 	// s.lastApplied < input.LeaderCommit
-	// 	s.commitIndex++
-	// 	entry := s.log[s.lastApplied+1]
-	// 	s.metaStore.UpdateFile(ctx, entry.FileMetaData)
-	// 	s.lastApplied++
-	// 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
-	// }
 	return nil, nil
 }
 
 func (s *RaftSurfstore) SetLeader(ctx context.Context, _ *emptypb.Empty) (*Success, error) {
-	fmt.Printf("============= Set Leader: %d =============\n", s.id)
+	// fmt.Printf("============= Set Leader: %d =============\n", s.id)
 	s.isLeaderMutex.Lock()
 	defer s.isLeaderMutex.Unlock()
 	s.isLeader = true
 	s.term++
-	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
+	// fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 
 	//TODO: update state
 
@@ -247,7 +228,7 @@ func (s *RaftSurfstore) SetLeader(ctx context.Context, _ *emptypb.Empty) (*Succe
 }
 
 func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*Success, error) {
-	fmt.Printf("============= SendHearbeat: %d =============\n", s.id)
+	// fmt.Printf("============= SendHearbeat: %d =============\n", s.id)
 
 	// sendHearbeat by followers
 	if !s.isLeader {
@@ -272,7 +253,7 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 		Entries:      s.log,
 		LeaderCommit: s.commitIndex,
 	}
-	fmt.Printf("[Input Entry]: {Term: %d}, {Entries:%s}, {Commit: %d}\n", AppendEntriesInput.Term, AppendEntriesInput.Entries, AppendEntriesInput.LeaderCommit)
+	// fmt.Printf("[Input Entry]: {Term: %d}, {Entries:%s}, {Commit: %d}\n", AppendEntriesInput.Term, AppendEntriesInput.Entries, AppendEntriesInput.LeaderCommit)
 
 	for idx, addr := range s.peers {
 		if int64(idx) == s.id {
@@ -295,7 +276,7 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 // ========== DO NOT MODIFY BELOW THIS LINE =====================================
 
 func (s *RaftSurfstore) Crash(ctx context.Context, _ *emptypb.Empty) (*Success, error) {
-	fmt.Printf(" !!!!!!!!!!!!!!! Crashed: %d\n", s.id)
+	// fmt.Printf(" !!!!!!!!!!!!!!! Crashed: %d\n", s.id)
 	s.isCrashedMutex.Lock()
 	s.isCrashed = true
 	s.isCrashedMutex.Unlock()
@@ -304,7 +285,7 @@ func (s *RaftSurfstore) Crash(ctx context.Context, _ *emptypb.Empty) (*Success, 
 }
 
 func (s *RaftSurfstore) Restore(ctx context.Context, _ *emptypb.Empty) (*Success, error) {
-	fmt.Printf(" ^^^^^^^^^^^^^^^ Restored: %d\n", s.id)
+	// fmt.Printf(" ^^^^^^^^^^^^^^^ Restored: %d\n", s.id)
 	s.isCrashedMutex.Lock()
 	s.isCrashed = false
 	s.isCrashedMutex.Unlock()
