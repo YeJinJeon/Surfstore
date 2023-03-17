@@ -152,11 +152,15 @@ func (s *RaftSurfstore) sendToFollower(ctx context.Context, addr string, respons
 	client := NewRaftSurfstoreClient(conn)
 
 	_, err := client.AppendEntries(ctx, &AppendEntriesInput)
+	fmt.Println("******")
+	fmt.Println(err)
 	if err != nil { // ERR_SERVER_CRASHED
+		fmt.Println("=======")
 		responses <- false
 		return
 	}
 	// TODO: check output
+	fmt.Println("??????")
 	responses <- true
 }
 
@@ -176,7 +180,7 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	*/
 	if s.isCrashed {
 		fmt.Println("!!!!!!!!!! RECOGNIZED TAHT SERVER IS CRASHED")
-		return nil, ERR_SERVER_CRASHED
+		return &AppendEntryOutput{Term: s.term}, ERR_SERVER_CRASHED
 	}
 
 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
@@ -192,12 +196,12 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		s.isLeader = false
 		s.term = input.Term
 		fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
-		return nil, nil
+		return &AppendEntryOutput{Term: s.term}, nil
 	}
 
 	if len(input.Entries) == 0 { //Hearbeat from previous leader
 		fmt.Println("!!!!!!!!!!! [setLeader] Leader switched")
-		return nil, nil
+		return &AppendEntryOutput{Term: s.term}, nil
 	}
 
 	// TODO actually check entries
@@ -208,14 +212,14 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	if input.PrevLogIndex < 0 && len(input.Entries) == 1 && input.LeaderCommit == -1 {
 		fmt.Println("first log update on client")
 		s.log = input.Entries
-		return nil, nil
+		return &AppendEntryOutput{Term: s.term}, nil
 	}
 
 	//2. Reply false if log doesn’t contain an entry at prevLogIndex whose term
 	// matches prevLogTerm (§5.3)
 	if input.PrevLogIndex >= 0 && s.log[input.PrevLogIndex].Term != input.PrevLogTerm {
 		fmt.Println("refuses to append new entry")
-		return nil, nil
+		return &AppendEntryOutput{Term: s.term}, nil
 	}
 
 	//3. conflict with new entry
@@ -244,7 +248,7 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		s.lastApplied++
 	}
 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
-	return nil, nil
+	return &AppendEntryOutput{Term: s.term}, nil
 }
 
 func (s *RaftSurfstore) SetLeader(ctx context.Context, _ *emptypb.Empty) (*Success, error) {
