@@ -167,6 +167,10 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		input: Entry Input from the node claiming to be a leader
 		s: follower(client)
 	*/
+	if s.isCrashed {
+		return nil, ERR_SERVER_CRASHED
+	}
+
 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 	if input.Term < s.term {
 		fmt.Println("!!!!!!!!!! [setLeader] ERR NOT LEADER")
@@ -274,8 +278,9 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 		Entries:      s.log,
 		LeaderCommit: s.commitIndex,
 	}
-	fmt.Printf("[Input Entry]: {Term: %d}, {Entries:%s}, {Commit: %d}\n", AppendEntriesInput.Term, AppendEntriesInput.Entries, AppendEntriesInput.LeaderCommit)
+	fmt.Printf("[Input Entry]: {Term: %d}, {PrevLogIndex:%d}, {PrevLogTerm:%d}, {Entries:%s}, {Commit: %d}\n", AppendEntriesInput.Term, AppendEntriesInput.PrevLogIndex, AppendEntriesInput.PrevLogTerm, AppendEntriesInput.Entries, AppendEntriesInput.LeaderCommit)
 
+	crash := 0
 	for idx, addr := range s.peers {
 		if int64(idx) == s.id {
 			continue
@@ -289,6 +294,12 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 			s.isLeaderMutex.Lock()
 			defer s.isLeaderMutex.Unlock()
 			s.isLeader = false
+			return &Success{Flag: false}, nil
+		} else if errors.Is(err, ERR_SERVER_CRASHED) {
+			crash += 1
+		}
+
+		if crash > len(s.peers)/2 {
 			return &Success{Flag: false}, nil
 		}
 	}
