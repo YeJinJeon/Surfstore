@@ -127,6 +127,7 @@ func (s *RaftSurfstore) sendToFollower(ctx context.Context, addr string, respons
 	var prev_logIndex int64
 	var prev_logTerm int64
 	if len(s.log) > 1 {
+		fmt.Println("******", len(s.log))
 		prev_logIndex = int64(len(s.log) - 2)
 		prev_logTerm = s.log[len(s.log)-2].Term
 	} else {
@@ -197,7 +198,7 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	fmt.Println("-------------> UpdateFile (Update Client Log): ")
 
 	//1.First update on client
-	if input.PrevLogIndex < 0 && len(input.Entries) == 1 {
+	if input.PrevLogIndex < 0 && len(input.Entries) == 1 && input.LeaderCommit == -1 {
 		fmt.Println("first log update on client")
 		s.log = input.Entries
 		return nil, nil
@@ -211,14 +212,14 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	}
 
 	//3. conflict with new entry
-	if len(s.log) >= len(input.Entries) && s.log[len(s.log)-1].Term != input.Entries[len(input.Entries)-1].Term {
+	if len(s.log) >= len(input.Entries) && s.log[input.PrevLogIndex+1].Term != input.Entries[input.PrevLogIndex+1].Term {
 		fmt.Println("Conflict with new entry")
 		s.log = s.log[:input.PrevLogIndex+1]
 		s.log = append(s.log, input.Entries[len(input.Entries)-1])
 	}
 
 	//4. Append any new entries not already in the log
-	if len(s.log) < len(input.Entries)-1 {
+	if len(s.log) < len(input.Entries) {
 		fmt.Println("Append new entry")
 		s.log = input.Entries
 	}
@@ -262,9 +263,9 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 
 	var prev_logIndex int64
 	var prev_logTerm int64
-	if len(s.log) > 0 {
-		prev_logIndex = int64(len(s.log) - 1)
-		prev_logTerm = s.log[len(s.log)-1].Term
+	if len(s.log) > 1 {
+		prev_logIndex = int64(len(s.log) - 2)
+		prev_logTerm = s.log[len(s.log)-2].Term
 	} else {
 		prev_logIndex = int64(-1)
 		prev_logTerm = int64(0)
