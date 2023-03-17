@@ -115,19 +115,22 @@ func (s *RaftSurfstore) sendToAllFollowersInParallel(ctx context.Context) {
 			break
 		}
 	}
+	fmt.Println("^^^", totalAppends)
 	if totalAppends > len(s.peers)/2 {
 		// TODO: put on correct channel
 		*s.pendingCommits[len(s.pendingCommits)-1] <- true
 		// TODO: update commit index with right value
 		s.commitIndex++
+	} else {
+		*s.pendingCommits[len(s.pendingCommits)-1] <- false
 	}
 }
 
 func (s *RaftSurfstore) sendToFollower(ctx context.Context, addr string, responses chan bool) {
+
 	var prev_logIndex int64
 	var prev_logTerm int64
 	if len(s.log) > 1 {
-		fmt.Println("******", len(s.log))
 		prev_logIndex = int64(len(s.log) - 2)
 		prev_logTerm = s.log[len(s.log)-2].Term
 	} else {
@@ -148,8 +151,11 @@ func (s *RaftSurfstore) sendToFollower(ctx context.Context, addr string, respons
 	conn, _ := grpc.Dial(addr, grpc.WithInsecure())
 	client := NewRaftSurfstoreClient(conn)
 
-	_, _ = client.AppendEntries(ctx, &AppendEntriesInput)
-
+	_, err := client.AppendEntries(ctx, &AppendEntriesInput)
+	if err != nil { // ERR_SERVER_CRASHED
+		responses <- false
+		return
+	}
 	// TODO: check output
 	responses <- true
 }
@@ -169,6 +175,7 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		s: follower(client)
 	*/
 	if s.isCrashed {
+		fmt.Println("!!!!!!!!!! RECOGNIZED TAHT SERVER IS CRASHED")
 		return nil, ERR_SERVER_CRASHED
 	}
 
@@ -248,8 +255,6 @@ func (s *RaftSurfstore) SetLeader(ctx context.Context, _ *emptypb.Empty) (*Succe
 	s.term++
 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 
-	//TODO: update state
-
 	return nil, nil
 }
 
@@ -281,7 +286,6 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 	}
 	fmt.Printf("[Input Entry]: {Term: %d}, {PrevLogIndex:%d}, {PrevLogTerm:%d}, {Entries:%s}, {Commit: %d}\n", AppendEntriesInput.Term, AppendEntriesInput.PrevLogIndex, AppendEntriesInput.PrevLogTerm, AppendEntriesInput.Entries, AppendEntriesInput.LeaderCommit)
 
-	crash := 0
 	for idx, addr := range s.peers {
 		if int64(idx) == s.id {
 			continue
@@ -295,12 +299,6 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 			s.isLeaderMutex.Lock()
 			defer s.isLeaderMutex.Unlock()
 			s.isLeader = false
-			return &Success{Flag: false}, nil
-		} else if errors.Is(err, ERR_SERVER_CRASHED) {
-			crash += 1
-		}
-
-		if crash > len(s.peers)/2 {
 			return &Success{Flag: false}, nil
 		}
 	}
