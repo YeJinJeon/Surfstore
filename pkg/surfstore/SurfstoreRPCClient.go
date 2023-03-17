@@ -111,6 +111,9 @@ func (surfClient *RPCClient) UpdateFile(fileMetaData *FileMetaData, latestVersio
 		if errors.Is(err, ERR_NOT_LEADER) {
 			fmt.Println("Not Leader")
 			continue
+		} else if errors.Is(err, ERR_SERVER_CRASHED) {
+			fmt.Println("Server is crashed")
+			continue
 		} else if err != nil {
 			return err
 		}
