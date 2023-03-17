@@ -4,8 +4,6 @@ import (
 	context "context"
 	"errors"
 	"fmt"
-
-	// "fmt"
 	"time"
 
 	grpc "google.golang.org/grpc"
@@ -111,10 +109,10 @@ func (surfClient *RPCClient) UpdateFile(fileMetaData *FileMetaData, latestVersio
 		conn, err := grpc.Dial(surfClient.MetaStoreAddrs[ind], grpc.WithInsecure())
 		defer conn.Close()
 		if errors.Is(err, ERR_NOT_LEADER) {
-			// fmt.Println("Not Leader")
+			fmt.Println("Not Leader")
 			continue
 		} else if errors.Is(err, ERR_SERVER_CRASHED) {
-			// fmt.Println("Server is crashed")
+			fmt.Println("Server is crashed")
 			continue
 		} else if err != nil {
 			return err
@@ -163,7 +161,6 @@ func (surfClient *RPCClient) GetBlockStoreMap(blockHashesIn []string, blockStore
 		return err
 	}
 	c := NewRaftSurfstoreClient(conn)
-	fmt.Println("****")
 	// perform the call
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -173,7 +170,6 @@ func (surfClient *RPCClient) GetBlockStoreMap(blockHashesIn []string, blockStore
 		conn.Close()
 		return err
 	}
-	fmt.Println("-----")
 	bsm := make(map[string][]string)
 	for k, blockhashes := range bmap.BlockStoreMap {
 		bsm[k] = blockhashes.Hashes

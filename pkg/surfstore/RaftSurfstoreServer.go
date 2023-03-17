@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"fmt"
+	"math"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -61,14 +62,14 @@ func (s *RaftSurfstore) UpdateFile(ctx context.Context, filemeta *FileMetaData) 
 		return nil, ERR_NOT_LEADER
 	} else if s.isCrashed {
 		return nil, ERR_SERVER_CRASHED
-	} else {
-		fmt.Printf("[Leader %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 	}
 	//append entry to our log
 	s.log = append(s.log, &UpdateOperation{
 		Term:         s.term,
 		FileMetaData: filemeta,
 	})
+	fmt.Printf("[Leader %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
+
 	commitChan := make(chan bool)
 	s.pendingCommits = append(s.pendingCommits, &commitChan)
 
@@ -140,6 +141,8 @@ func (s *RaftSurfstore) sendToFollower(ctx context.Context, addr string, respons
 		Entries:      s.log,
 		LeaderCommit: s.commitIndex,
 	}
+	fmt.Printf("[Input Entry]: {Term: %d}, {PrevLogIndex:%d}, {PrevLogTerm:%d}, {Entries:%s}, {Commit: %d}\n", AppendEntriesInput.Term, AppendEntriesInput.PrevLogIndex, AppendEntriesInput.PrevLogTerm, AppendEntriesInput.Entries, AppendEntriesInput.LeaderCommit)
+
 	// TODO: check all errors
 	conn, _ := grpc.Dial(addr, grpc.WithInsecure())
 	client := NewRaftSurfstoreClient(conn)
@@ -164,7 +167,7 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		input: Entry Input from the node claiming to be a leader
 		s: follower(client)
 	*/
-
+	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 	if input.Term < s.term {
 		fmt.Println("!!!!!!!!!! [setLeader] ERR NOT LEADER")
 		return &AppendEntryOutput{Term: s.term}, ERR_NOT_LEADER
@@ -186,31 +189,49 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	}
 
 	// TODO actually check entries
+
+	fmt.Println("-------------> UpdateFile (Update Client Log): ")
+
+	//1.First update on client
+	if input.PrevLogIndex < 0 && len(input.Entries) == 1 {
+		fmt.Println("first log update on client")
+		s.log = input.Entries
+		return nil, nil
+	}
+
 	//2. Reply false if log doesn’t contain an entry at prevLogIndex whose term
 	// matches prevLogTerm (§5.3)
-
-	fmt.Println("-------------> UpdateFile (Update Client Log)")
-	if len(s.log) >= len(input.Entries)-1 && s.log[input.PrevLogIndex].Term != input.PrevLogTerm { //refuses to append new entry
+	if input.PrevLogIndex >= 0 && s.log[input.PrevLogIndex].Term != input.PrevLogTerm {
+		fmt.Println("refuses to append new entry")
 		return nil, nil
 	}
 
 	//3. conflict with new entry
-	if len(s.log) >= len(input.Entries) && s.log[len(s.log)-1].Term != input.Term {
+	if len(s.log) >= len(input.Entries) && s.log[len(s.log)-1].Term != input.Entries[len(input.Entries)-1].Term {
+		fmt.Println("Conflict with new entry")
 		s.log = s.log[:input.PrevLogIndex+1]
 		s.log = append(s.log, input.Entries[len(input.Entries)-1])
 	}
 
 	//4. Append any new entries not already in the log
 	if len(s.log) < len(input.Entries)-1 {
+		fmt.Println("Append new entry")
 		s.log = input.Entries
 	}
 
-	fmt.Println("-------------> [UpdateFile] SendHeartbeat")
+	/// Apply to log to state machine on followers
+
+	fmt.Println("-------------> UpdateFile [SendHeartbeat]")
+
+	if s.commitIndex < input.LeaderCommit {
+		s.commitIndex = int64(math.Min(float64(input.LeaderCommit), float64(len(s.log)-1)))
+	}
 	for s.lastApplied < input.LeaderCommit {
 		entry := s.log[s.lastApplied+1]
 		s.metaStore.UpdateFile(ctx, entry.FileMetaData)
 		s.lastApplied++
 	}
+	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 	return nil, nil
 }
 
@@ -262,6 +283,7 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 		conn, _ := grpc.Dial(addr, grpc.WithInsecure())
 		client := NewRaftSurfstoreClient(conn)
 
+		fmt.Println("--------> Dial to Client: ", addr)
 		_, err := client.AppendEntries(ctx, &AppendEntriesInput)
 		if errors.Is(err, ERR_NOT_LEADER) {
 			s.isLeaderMutex.Lock()

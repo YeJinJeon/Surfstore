@@ -55,7 +55,6 @@ func TestSyncTwoClientsSameFileLeaderFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync failed")
 	}
-
 	test.Clients[1].SendHeartbeat(test.Context, &emptypb.Empty{})
 
 	//client1 syncs
@@ -63,7 +62,6 @@ func TestSyncTwoClientsSameFileLeaderFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync failed")
 	}
-
 	test.Clients[1].SendHeartbeat(test.Context, &emptypb.Empty{})
 	test.Clients[1].SendHeartbeat(test.Context, &emptypb.Empty{})
 
