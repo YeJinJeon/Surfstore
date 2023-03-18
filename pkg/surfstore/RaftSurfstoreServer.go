@@ -59,9 +59,9 @@ func (s *RaftSurfstore) GetBlockStoreAddrs(ctx context.Context, empty *emptypb.E
 func (s *RaftSurfstore) UpdateFile(ctx context.Context, filemeta *FileMetaData) (*Version, error) {
 	fmt.Printf("============= UpdateFile: %d =============\n", s.id)
 	if !s.isLeader {
-		return nil, ERR_NOT_LEADER
+		return &Version{Version: filemeta.Version}, ERR_NOT_LEADER
 	} else if s.isCrashed {
-		return nil, ERR_SERVER_CRASHED
+		return &Version{Version: filemeta.Version}, ERR_SERVER_CRASHED
 	}
 	//append entry to our log
 	s.log = append(s.log, &UpdateOperation{
@@ -87,8 +87,9 @@ func (s *RaftSurfstore) UpdateFile(ctx context.Context, filemeta *FileMetaData) 
 		s.lastApplied++
 		fmt.Printf("[Leader %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 		return s.metaStore.UpdateFile(ctx, filemeta)
+	} else {
+		return &Version{Version: filemeta.Version}, nil
 	}
-	return nil, nil
 }
 
 func (s *RaftSurfstore) sendToAllFollowersInParallel(ctx context.Context) {
@@ -154,14 +155,14 @@ func (s *RaftSurfstore) sendToFollower(ctx context.Context, addr string, respons
 	_, err := client.AppendEntries(ctx, &AppendEntriesInput)
 	fmt.Println("******")
 	fmt.Println(err)
-	if err != nil { // ERR_SERVER_CRASHED
+	if err != nil {
 		fmt.Println("=======")
 		responses <- false
-		return
+	} else {
+		// TODO: check output
+		fmt.Println("??????")
+		responses <- true
 	}
-	// TODO: check output
-	fmt.Println("??????")
-	responses <- true
 }
 
 // 1. Reply false if term < currentTerm (§5.1) --> term is out-dated
@@ -212,7 +213,8 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 	if input.PrevLogIndex < 0 && len(input.Entries) == 1 && input.LeaderCommit == -1 {
 		fmt.Println("first log update on client")
 		s.log = input.Entries
-		return &AppendEntryOutput{Term: s.term}, nil
+		fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
+		return &AppendEntryOutput{Term: s.term, MatchedIndex: int64(len(s.log))}, nil
 	}
 
 	//2. Reply false if log doesn’t contain an entry at prevLogIndex whose term
@@ -248,7 +250,7 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		s.lastApplied++
 	}
 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
-	return &AppendEntryOutput{Term: s.term}, nil
+	return &AppendEntryOutput{Term: s.term, MatchedIndex: int64(len(s.log) - 1)}, nil
 }
 
 func (s *RaftSurfstore) SetLeader(ctx context.Context, _ *emptypb.Empty) (*Success, error) {
@@ -259,7 +261,7 @@ func (s *RaftSurfstore) SetLeader(ctx context.Context, _ *emptypb.Empty) (*Succe
 	s.term++
 	fmt.Printf("[Client %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 
-	return nil, nil
+	return &Success{Flag: true}, nil
 }
 
 func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*Success, error) {
@@ -290,20 +292,37 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 	}
 	fmt.Printf("[Input Entry]: {Term: %d}, {PrevLogIndex:%d}, {PrevLogTerm:%d}, {Entries:%s}, {Commit: %d}\n", AppendEntriesInput.Term, AppendEntriesInput.PrevLogIndex, AppendEntriesInput.PrevLogTerm, AppendEntriesInput.Entries, AppendEntriesInput.LeaderCommit)
 
+	commit := 0
 	for idx, addr := range s.peers {
 		if int64(idx) == s.id {
 			continue
 		}
 		conn, _ := grpc.Dial(addr, grpc.WithInsecure())
 		client := NewRaftSurfstoreClient(conn)
+		prev_state, err := client.GetInternalState(ctx, &emptypb.Empty{})
+		if err != nil {
+			fmt.Println("error while loading Internal State")
+		}
 
 		fmt.Println("--------> Dial to Client: ", addr)
-		_, err := client.AppendEntries(ctx, &AppendEntriesInput)
+		output, err := client.AppendEntries(ctx, &AppendEntriesInput)
 		if errors.Is(err, ERR_NOT_LEADER) {
 			s.isLeaderMutex.Lock()
 			defer s.isLeaderMutex.Unlock()
 			s.isLeader = false
 			return &Success{Flag: false}, nil
+		}
+
+		if output.Term == prev_state.Term && output.MatchedIndex > int64(len(prev_state.Log)) {
+			commit++
+		}
+		//once commited, apply to the state machine
+		if commit > len(s.peers)/2 {
+			fmt.Println("**********SUCCESS COMMITTED*********")
+			s.commitIndex++
+			s.metaStore.UpdateFile(ctx, AppendEntriesInput.Entries[len(AppendEntriesInput.Entries)-1].FileMetaData)
+			s.lastApplied++
+			fmt.Printf("[Leader %d]: {Term: %d}, {Log: %s}, {Commited: %d}, {Applied: %d}\n", s.id, s.term, s.log, s.commitIndex, s.lastApplied)
 		}
 	}
 	return &Success{Flag: true}, nil
