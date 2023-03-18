@@ -200,9 +200,9 @@ func (s *RaftSurfstore) AppendEntries(ctx context.Context, input *AppendEntryInp
 		return &AppendEntryOutput{Term: s.term}, nil
 	}
 
-	if len(input.Entries) == 0 { //Hearbeat from previous leader
+	if input.Term == s.term && len(input.Entries) == 0 { //Hearbeat from previous leader
 		fmt.Println("!!!!!!!!!!! [setLeader] Leader switched")
-		return &AppendEntryOutput{Term: s.term}, nil
+		return &AppendEntryOutput{Term: s.term}, ERR_NOT_LEADER
 	}
 
 	// TODO actually check entries
@@ -307,6 +307,13 @@ func (s *RaftSurfstore) SendHeartbeat(ctx context.Context, _ *emptypb.Empty) (*S
 		fmt.Println("--------> Dial to Client: ", addr)
 		output, err := client.AppendEntries(ctx, &AppendEntriesInput)
 		if errors.Is(err, ERR_NOT_LEADER) {
+			fmt.Println("here")
+			s.isLeaderMutex.Lock()
+			defer s.isLeaderMutex.Unlock()
+			s.isLeader = false
+			return &Success{Flag: false}, nil
+		} else if err != nil {
+			fmt.Println("here")
 			s.isLeaderMutex.Lock()
 			defer s.isLeaderMutex.Unlock()
 			s.isLeader = false
